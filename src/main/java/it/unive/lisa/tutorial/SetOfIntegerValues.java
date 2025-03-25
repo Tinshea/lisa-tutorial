@@ -22,7 +22,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class SetOfIntegerValues implements BaseNonRelationalValueDomain<SetOfIntegerValues> {
-    private static final int MAX_NUMBER_OF_ELEMENTS = 500;
+    private static final int MAX_NUMBER_OF_ELEMENTS = 5;
     private Set<Integer> values;
 
     private SetOfIntegerValues(Set<Integer> values) {

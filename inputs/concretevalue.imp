@@ -1,5 +1,5 @@
 class concretevalue {
-	basic() {
+	/*basic() {
 		def i = 2;
 		def j = -10;
 		def a = i + j;
@@ -13,5 +13,12 @@ class concretevalue {
 	    if(i > 0)
 	        i = 1;
 	    def j = i * 0;
+	}*/
+
+	condition(a) {
+	    def x = 0;
+	    def y = 100;
+	    if(y/10-9 == a)
+	        x = a-1;
 	}
 }

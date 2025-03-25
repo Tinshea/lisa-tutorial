@@ -4,13 +4,17 @@ import it.unive.lisa.analysis.Lattice;
 import it.unive.lisa.analysis.SemanticException;
 import it.unive.lisa.analysis.SemanticOracle;
 import it.unive.lisa.analysis.nonrelational.value.BaseNonRelationalValueDomain;
+import it.unive.lisa.analysis.nonrelational.value.ValueEnvironment;
 import it.unive.lisa.program.cfg.ProgramPoint;
 import it.unive.lisa.symbolic.value.Constant;
+import it.unive.lisa.symbolic.value.ValueExpression;
+import it.unive.lisa.symbolic.value.Variable;
 import it.unive.lisa.symbolic.value.operator.AdditionOperator;
 import it.unive.lisa.symbolic.value.operator.DivisionOperator;
 import it.unive.lisa.symbolic.value.operator.MultiplicationOperator;
 import it.unive.lisa.symbolic.value.operator.SubtractionOperator;
 import it.unive.lisa.symbolic.value.operator.binary.BinaryOperator;
+import it.unive.lisa.symbolic.value.operator.binary.ComparisonEq;
 import it.unive.lisa.util.representation.StringRepresentation;
 import it.unive.lisa.util.representation.StructuredRepresentation;
 
@@ -97,5 +101,24 @@ public class ConcreteValue implements BaseNonRelationalValueDomain<ConcreteValue
             return new ConcreteValue(left.value / right.value);
         }
         return BaseNonRelationalValueDomain.super.evalBinaryExpression(operator, left, right, pp, oracle);
+    }
+
+    @Override
+    public ValueEnvironment<ConcreteValue> assumeBinaryExpression(ValueEnvironment<ConcreteValue> environment, BinaryOperator operator, ValueExpression left, ValueExpression right, ProgramPoint src, ProgramPoint dest, SemanticOracle oracle) throws SemanticException {
+        if(operator instanceof ComparisonEq && left instanceof Variable)
+            return assumeVariableEqualExpression(environment, (Variable) left, right, src, oracle);
+        if(operator instanceof ComparisonEq && right instanceof Variable)
+            return assumeVariableEqualExpression(environment, (Variable) right, left, src, oracle);
+        return BaseNonRelationalValueDomain.super.assumeBinaryExpression(environment, operator, left, right, src, dest, oracle);
+    }
+
+    private ValueEnvironment<ConcreteValue> assumeVariableEqualExpression(ValueEnvironment<ConcreteValue> environment, Variable left, ValueExpression right, ProgramPoint src, SemanticOracle oracle) throws SemanticException {
+        Variable a = left;
+        ConcreteValue v = this.eval(right, environment, src, oracle);
+        if(! v.isTop() && ! v.isBottom()) {
+            int value = v.value;
+            return environment.putState(a, new ConcreteValue(value));
+        }
+        return environment;
     }
 }
