@@ -1,0 +1,63 @@
+class setoffloatvalueswithoverflow {
+
+    severalvalues() {
+        def x = 3.14159;    // Pi
+        def y = 2.71828;    // Euler's number
+
+        if (x > 5.0) {
+            x = 6.02214; 
+            y = 1.618034;   // Golden ratio
+        }
+
+        if (x > 100.0) {
+            x = x + 299792458.0; // Speed of light
+            y = y + 0.00000001;  // Small increment
+        }
+
+        if (x > 1000.0) {
+            x = x * 1.5;     // Multiplicative increase
+            y = y / 3.0;     // Division
+        }
+
+        if (x > 10000.0) {
+            x = x - 9999.9;  // Subtraction to near zero
+            y = y + 42.0;    // The answer to everything
+        }
+
+        if (x > 100000.0) {
+            x = x * 100.0;   // Modulo to get remainder
+            y = y + y;       // Square the value
+        }
+
+        if (x > 1000000.0) {
+            x = 1.0 / x;     // Inversion
+            y = y * y; // Square root
+        }
+
+        def z = x + y;
+    }
+
+   overflowsample() {
+    def a = 1.0;
+    def b = 0.0;
+    def c = a / b;   // Division par zéro → Infinity
+}
+
+overflowsample2() {
+    def a = 1000000000.0;       // 10^9
+    def b = a * a;              // 10^18
+    def c = b * b;              // 10^36
+    def d = c * c;              // 10^72
+}
+
+
+
+    basicops() {
+        def i = 2.2;
+        def j = -10.1;
+        def a = i + j;
+        def s = i - j;
+        def m = i * j;
+        def d = i / j;
+    }
+}
