@@ -27,10 +27,9 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
     private final boolean isTop;
     private final Set<Inequality> inequalities;
 
-    // Constructeurs
     private TwoVarLinearInequality(boolean isTop, Set<Inequality> inequalities) {
         this.isTop = isTop;
-        this.inequalities = new HashSet<>(inequalities); // Copie défensive
+        this.inequalities = new HashSet<>(inequalities);
     }
 
     public TwoVarLinearInequality() {
@@ -45,7 +44,6 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
         applyCompletion();
     }
 
-    // Méthodes du treillis
     @Override
     public TwoVarLinearInequality top() {
         return TOP;
@@ -124,14 +122,14 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
             Constant constant = (Constant) expression;
             if (constant.getValue() instanceof Integer) {
                 int value = (Integer) constant.getValue();
-                updated.add(new Inequality(1, id, 0, null, value, false));  // id <= value
-                updated.add(new Inequality(-1, id, 0, null, -value, false)); // id >= value
+                updated.add(new Inequality(1, id, 0, null, value, false))
+                updated.add(new Inequality(-1, id, 0, null, -value, false));
             }
         } else if (expression instanceof Identifier) {
             Identifier right = (Identifier) expression;
             if (!isHeapRelated(right)) {
-                updated.add(new Inequality(1, id, -1, right, 0, false));  // id <= right
-                updated.add(new Inequality(-1, id, 1, right, 0, false));  // id >= right
+                updated.add(new Inequality(1, id, -1, right, 0, false));
+                updated.add(new Inequality(-1, id, 1, right, 0, false));
             }
         } else if (expression instanceof BinaryExpression) {
             BinaryExpression bin = (BinaryExpression) expression;
@@ -142,8 +140,8 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
                 Constant constant = (Constant) bin.getRight();
                 if (!isHeapRelated(left) && constant.getValue() instanceof Integer) {
                     int value = (Integer) constant.getValue();
-                    updated.add(new Inequality(1, id, -1, left, value, false));  // id <= left + value
-                    updated.add(new Inequality(-1, id, 1, left, -value, false)); // id >= left + value
+                    updated.add(new Inequality(1, id, -1, left, value, false));
+                    updated.add(new Inequality(-1, id, 1, left, -value, false));
                 }
             } else if (bin.getOperator() instanceof AdditionOperator &&
                     bin.getLeft() instanceof BinaryExpression &&
@@ -158,21 +156,18 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
                     Identifier var = (Identifier) leftBin.getRight();
                     int value = (Integer) constant.getValue();
                     if (!isHeapRelated(var)) {
-                        // Gérer id := coeff * var + value
-                        int adjustedValue = value; // Ajustement si nécessaire
+                        int adjustedValue = value;
                         if (coeff == 1) {
-                            updated.add(new Inequality(1, id, -1, var, value, false));  // id <= var + value
-                            updated.add(new Inequality(-1, id, 1, var, -value, false)); // id >= var + value
+                            updated.add(new Inequality(1, id, -1, var, value, false));
+                            updated.add(new Inequality(-1, id, 1, var, -value, false));
                         } else if (coeff == -1) {
-                            updated.add(new Inequality(1, id, 1, var, value, false));   // id <= -var + value, soit id + var <= value
-                            updated.add(new Inequality(-1, id, -1, var, -value, false)); // id >= -var + value, soit -id - var <= -value
+                            updated.add(new Inequality(1, id, 1, var, value, false));
+                            updated.add(new Inequality(-1, id, -1, var, -value, false));
                         } else if (coeff == 2) {
-                            // Cas spécifique pour z = 2*x + 1 (si nécessaire)
-                            updated.add(new Inequality(1, id, -1, var, coeff + value - 1, false)); // id <= var + (coeff + value - 1)
-                            updated.add(new Inequality(-1, id, 1, var, -(coeff + value - 1), false)); // id >= var + (coeff + value - 1)
+                            updated.add(new Inequality(1, id, -1, var, coeff + value - 1, false));
+                            updated.add(new Inequality(-1, id, 1, var, -(coeff + value - 1), false));
                         } else {
-                            // Approximation pour d'autres coefficients
-                            updated.add(new Inequality(1, id, 0, null, coeff + value, false)); // Approximation conservatrice
+                            updated.add(new Inequality(1, id, 0, null, coeff + value, false));
                             updated.add(new Inequality(-1, id, 0, null, -(coeff + value), false));
                         }
                     }
@@ -185,7 +180,7 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
     @Override
     public TwoVarLinearInequality smallStepSemantics(ValueExpression expression, ProgramPoint pp, SemanticOracle oracle)
             throws SemanticException {
-        return this; // Pas de modification pour les petits pas dans ce domaine
+        return this;
     }
 
     @Override
@@ -201,7 +196,7 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
                     Identifier x = (Identifier) bin.getLeft();
                     Identifier y = (Identifier) bin.getRight();
                     if (!isHeapRelated(x) && !isHeapRelated(y)) {
-                        updated.add(new Inequality(1, x, -1, y, 0, true)); // x <= y
+                        updated.add(new Inequality(1, x, -1, y, 0, true));
                     }
                 } else if (bin.getLeft() instanceof Identifier && bin.getRight() instanceof BinaryExpression) {
                     Identifier x = (Identifier) bin.getLeft();
@@ -212,7 +207,7 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
                         Identifier y = (Identifier) right.getLeft();
                         Constant c = (Constant) right.getRight();
                         if (!isHeapRelated(x) && !isHeapRelated(y) && c.getValue() instanceof Integer) {
-                            updated.add(new Inequality(1, x, -1, y, (Integer) c.getValue(), false)); // x <= y + c
+                            updated.add(new Inequality(1, x, -1, y, (Integer) c.getValue(), false));
                         }
                     }
                 }
@@ -250,20 +245,19 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
 
     @Override
     public Satisfiability satisfies(ValueExpression expression, ProgramPoint pp, SemanticOracle oracle) throws SemanticException {
-        return Satisfiability.UNKNOWN; // À implémenter pour une vérification complète
+        return Satisfiability.UNKNOWN;
     }
 
     @Override
     public TwoVarLinearInequality pushScope(ScopeToken token) throws SemanticException {
-        return this; // Pas de modification des contraintes dans ce domaine
+        return this;
     }
 
     @Override
     public TwoVarLinearInequality popScope(ScopeToken token) throws SemanticException {
-        return this; // Pas de modification des contraintes dans ce domaine
+        return this;
     }
 
-    // Méthodes utilitaires
     private void applyCompletion() {
         if (isTop) return;
         Set<Inequality> completed = new HashSet<>(inequalities);
@@ -272,7 +266,6 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
         int iteration = 0;
         boolean changed;
 
-        // Conserver les contraintes protégées
         Set<Inequality> protectedInequalities = new HashSet<>();
         for (Inequality ineq : completed) {
             if (ineq.isProtected) {
@@ -311,7 +304,7 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
             inequalities.add(new Inequality(0, null, 0, null, -1, false));
         } else {
             inequalities.clear();
-            completed.addAll(protectedInequalities); // Réajouter les contraintes protégées
+            completed.addAll(protectedInequalities);
             inequalities.addAll(completed);
         }
     }
@@ -320,25 +313,21 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
         Map<String, Inequality> tightened = new HashMap<>();
         Set<Inequality> protectedInequalities = new HashSet<>();
 
-        // Identifier les contraintes protégées
         for (Inequality ineq : set) {
             if (ineq.isProtected) {
                 protectedInequalities.add(ineq);
             }
         }
 
-        // Suppression des redondances pour les contraintes non protégées
         for (Inequality ineq : set) {
             if (ineq.isTrivial() || ineq.isProtected) continue;
             String key = ineq.getKey();
             tightened.compute(key, (k, old) -> {
                 if (old == null) return ineq;
-                // Garder l'inégalité avec la constante la plus petite (plus restrictive)
                 return old.c > ineq.c ? ineq : old;
             });
         }
 
-        // Ajouter les contraintes protégées
         Set<Inequality> result = new HashSet<>(tightened.values());
         result.addAll(protectedInequalities);
         return result;
@@ -377,7 +366,6 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
         return new StringRepresentation(inequalities.toString());
     }
 
-    // Classe interne pour représenter une inégalité a*x + b*y <= c
     public static class Inequality {
         private final int a, b, c;
         private final Identifier x, y;
@@ -410,13 +398,9 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
         }
 
         boolean canCombineWith(Inequality other) {
-            // Cas 1 : this.y == other.x
             boolean case1 = this.y != null && other.x != null && this.y.equals(other.x) && this.b * other.a < 0;
-            // Cas 2 : this.x == other.y
             boolean case2 = this.x != null && other.y != null && this.x.equals(other.y) && this.a * other.b < 0;
-            // Cas 3 : this.y == null et other.x != null et this.x == other.x
             boolean case3 = this.y == null && other.x != null && this.x != null && this.x.equals(other.x) && this.b * other.a < 0;
-            // Cas 4 : this.x == null et other.y != null et this.y == other.y
             boolean case4 = this.x == null && other.y != null && this.y != null && this.y.equals(other.y) && this.a * other.b < 0;
             return case1 || case2 || case3 || case4;
         }
