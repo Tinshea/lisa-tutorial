@@ -122,7 +122,7 @@ public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequalit
             Constant constant = (Constant) expression;
             if (constant.getValue() instanceof Integer) {
                 int value = (Integer) constant.getValue();
-                updated.add(new Inequality(1, id, 0, null, value, false))
+                updated.add(new Inequality(1, id, 0, null, value, false));
                 updated.add(new Inequality(-1, id, 0, null, -value, false));
             }
         } else if (expression instanceof Identifier) {
