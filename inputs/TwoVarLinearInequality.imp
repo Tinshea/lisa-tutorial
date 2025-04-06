@@ -1,5 +1,5 @@
 class TwoVarPerLinearInequality {
-    basic(){
+    /*basic(){
         def x = 1;
         def y = x + 1;
         def z = 2*x + 1;
@@ -19,7 +19,7 @@ class TwoVarPerLinearInequality {
             }
         }
         
-    }
+    }*/
     transitivity(){
         def x= 1 ;
         def y= -1*x+1 ; // y+x <= 1

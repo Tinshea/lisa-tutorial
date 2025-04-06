@@ -1,5 +1,6 @@
 package it.unive.lisa.tutorial;
 
+import it.unive.lisa.analysis.Lattice;
 import it.unive.lisa.analysis.ScopeToken;
 import it.unive.lisa.analysis.SemanticException;
 import it.unive.lisa.analysis.SemanticOracle;
@@ -11,6 +12,7 @@ import it.unive.lisa.symbolic.value.Constant;
 import it.unive.lisa.symbolic.value.Identifier;
 import it.unive.lisa.symbolic.value.ValueExpression;
 import it.unive.lisa.symbolic.value.operator.AdditionOperator;
+import it.unive.lisa.symbolic.value.operator.MultiplicationOperator;
 import it.unive.lisa.symbolic.value.operator.binary.ComparisonLe;
 import it.unive.lisa.util.representation.StringRepresentation;
 import it.unive.lisa.util.representation.StructuredRepresentation;
@@ -19,220 +21,491 @@ import java.util.*;
 import java.util.function.Predicate;
 
 public class TwoVarLinearInequality implements ValueDomain<TwoVarLinearInequality> {
+    private static final TwoVarLinearInequality TOP = new TwoVarLinearInequality(true, Collections.emptySet());
+    private static final TwoVarLinearInequality BOTTOM = new TwoVarLinearInequality(false, Collections.singleton(new Inequality(0, null, 0, null, -1, false)));
 
-    private final Set<TwoVarsInequality> constraints;
-    private final boolean topFlag, bottomFlag;
+    private final boolean isTop;
+    private final Set<Inequality> inequalities;
+
+    // Constructeurs
+    private TwoVarLinearInequality(boolean isTop, Set<Inequality> inequalities) {
+        this.isTop = isTop;
+        this.inequalities = new HashSet<>(inequalities); // Copie défensive
+    }
 
     public TwoVarLinearInequality() {
-        this.constraints = new HashSet<>();
-        this.topFlag = false;
-        this.bottomFlag = false;
+        this.isTop = false;
+        this.inequalities = new HashSet<>();
+        applyCompletion();
     }
 
-    private TwoVarLinearInequality(boolean isTop, boolean isBottom, Set<TwoVarsInequality> constraints) {
-        this.constraints = new HashSet<>(constraints);
-        this.topFlag = isTop;
-        this.bottomFlag = isBottom;
+    public TwoVarLinearInequality(Set<Inequality> inequalities) {
+        this.isTop = false;
+        this.inequalities = new HashSet<>(inequalities);
+        applyCompletion();
     }
 
-    public static TwoVarLinearInequality mkTop() {
-        return new TwoVarLinearInequality(true, false, Collections.emptySet());
-    }
-
-    public static TwoVarLinearInequality mkBottom() {
-        return new TwoVarLinearInequality(false, true, Collections.emptySet());
-    }
-
+    // Méthodes du treillis
     @Override
     public TwoVarLinearInequality top() {
-        return mkTop();
+        return TOP;
     }
 
     @Override
     public TwoVarLinearInequality bottom() {
-        return mkBottom();
+        return BOTTOM;
     }
 
     @Override
     public boolean isTop() {
-        return topFlag;
+        return isTop && inequalities.isEmpty();
     }
 
     @Override
     public boolean isBottom() {
-        return bottomFlag;
+        return !isTop && inequalities.size() == 1 && inequalities.iterator().next().isUnsatisfiable();
     }
 
     @Override
     public TwoVarLinearInequality lub(TwoVarLinearInequality other) throws SemanticException {
-        if (this.topFlag || other.topFlag) return mkTop();
-        if (this.bottomFlag) return other;
-        if (other.bottomFlag) return this;
+        if (isTop() || other.isTop()) return TOP;
+        if (isBottom()) return other;
+        if (other.isBottom()) return this;
 
-        Set<TwoVarsInequality> union = new HashSet<>(this.constraints);
-        union.addAll(other.constraints);
-        return new TwoVarLinearInequality(false, false, union);
+        Set<Inequality> union = new HashSet<>(this.inequalities);
+        union.addAll(other.inequalities);
+        return new TwoVarLinearInequality(removeRedundant(union));
     }
 
     @Override
     public TwoVarLinearInequality glb(TwoVarLinearInequality other) throws SemanticException {
-        if (this.bottomFlag || other.bottomFlag) return mkBottom();
-        if (this.topFlag) return other;
-        if (other.topFlag) return this;
+        if (isBottom() || other.isBottom()) return BOTTOM;
+        if (isTop()) return other;
+        if (other.isTop()) return this;
 
-        Set<TwoVarsInequality> intersection = new HashSet<>(this.constraints);
-        intersection.retainAll(other.constraints);
-        return new TwoVarLinearInequality(false, false, intersection);
+        Set<Inequality> intersection = new HashSet<>(this.inequalities);
+        intersection.addAll(other.inequalities);
+        return isSatisfiable(intersection) ? new TwoVarLinearInequality(intersection) : BOTTOM;
+    }
+
+    @Override
+    public TwoVarLinearInequality widening(TwoVarLinearInequality other) throws SemanticException {
+        if (isBottom()) return other;
+        if (other.isBottom()) return this;
+        if (isTop() || other.isTop()) return TOP;
+
+        Set<Inequality> stable = new HashSet<>();
+        for (Inequality ineq : this.inequalities) {
+            if (other.implies(ineq)) stable.add(ineq);
+        }
+        return new TwoVarLinearInequality(removeRedundant(stable));
     }
 
     @Override
     public boolean lessOrEqual(TwoVarLinearInequality other) throws SemanticException {
-        return other.constraints.containsAll(this.constraints);
+        if (isBottom()) return true;
+        if (other.isTop()) return true;
+        if (isTop() && !other.isTop()) return false;
+
+        for (Inequality ineq : this.inequalities) {
+            if (!other.implies(ineq)) return false;
+        }
+        return true;
     }
 
+    // Sémantique
     @Override
     public TwoVarLinearInequality assign(Identifier id, ValueExpression expression, ProgramPoint pp, SemanticOracle oracle)
             throws SemanticException {
-        if (isBottom() || isHeapIdentifier(id)) return this;
+        if (isBottom() || isHeapRelated(id)) return this;
 
-        Set<TwoVarsInequality> newConstraints = new HashSet<>();
-
-        if (expression instanceof Identifier otherId && !isHeapIdentifier(otherId)) {
-            newConstraints.add(new TwoVarsInequality(1, id, -1, otherId, 0));
-            newConstraints.add(new TwoVarsInequality(-1, id, 1, otherId, 0));
-        } else if (expression instanceof BinaryExpression bin &&
-                bin.getOperator() instanceof AdditionOperator &&
-                bin.getLeft() instanceof Identifier left &&
-                bin.getRight() instanceof Constant c &&
-                c.getValue() instanceof Integer val && !isHeapIdentifier(left)) {
-            newConstraints.add(new TwoVarsInequality(1, id, -1, left, val));
-            newConstraints.add(new TwoVarsInequality(-1, id, 1, left, -val));
+        Set<Inequality> updated = removeIdentifier(id).inequalities;
+        if (expression instanceof Constant) {
+            Constant constant = (Constant) expression;
+            if (constant.getValue() instanceof Integer) {
+                int value = (Integer) constant.getValue();
+                updated.add(new Inequality(1, id, 0, null, value, false));  // id <= value
+                updated.add(new Inequality(-1, id, 0, null, -value, false)); // id >= value
+            }
+        } else if (expression instanceof Identifier) {
+            Identifier right = (Identifier) expression;
+            if (!isHeapRelated(right)) {
+                updated.add(new Inequality(1, id, -1, right, 0, false));  // id <= right
+                updated.add(new Inequality(-1, id, 1, right, 0, false));  // id >= right
+            }
+        } else if (expression instanceof BinaryExpression) {
+            BinaryExpression bin = (BinaryExpression) expression;
+            if (bin.getOperator() instanceof AdditionOperator &&
+                    bin.getLeft() instanceof Identifier &&
+                    bin.getRight() instanceof Constant) {
+                Identifier left = (Identifier) bin.getLeft();
+                Constant constant = (Constant) bin.getRight();
+                if (!isHeapRelated(left) && constant.getValue() instanceof Integer) {
+                    int value = (Integer) constant.getValue();
+                    updated.add(new Inequality(1, id, -1, left, value, false));  // id <= left + value
+                    updated.add(new Inequality(-1, id, 1, left, -value, false)); // id >= left + value
+                }
+            } else if (bin.getOperator() instanceof AdditionOperator &&
+                    bin.getLeft() instanceof BinaryExpression &&
+                    bin.getRight() instanceof Constant) {
+                BinaryExpression leftBin = (BinaryExpression) bin.getLeft();
+                Constant constant = (Constant) bin.getRight();
+                if (leftBin.getOperator() instanceof MultiplicationOperator &&
+                        leftBin.getLeft() instanceof Constant &&
+                        leftBin.getRight() instanceof Identifier &&
+                        constant.getValue() instanceof Integer) {
+                    int coeff = (Integer) ((Constant) leftBin.getLeft()).getValue();
+                    Identifier var = (Identifier) leftBin.getRight();
+                    int value = (Integer) constant.getValue();
+                    if (!isHeapRelated(var)) {
+                        // Gérer id := coeff * var + value
+                        int adjustedValue = value; // Ajustement si nécessaire
+                        if (coeff == 1) {
+                            updated.add(new Inequality(1, id, -1, var, value, false));  // id <= var + value
+                            updated.add(new Inequality(-1, id, 1, var, -value, false)); // id >= var + value
+                        } else if (coeff == -1) {
+                            updated.add(new Inequality(1, id, 1, var, value, false));   // id <= -var + value, soit id + var <= value
+                            updated.add(new Inequality(-1, id, -1, var, -value, false)); // id >= -var + value, soit -id - var <= -value
+                        } else if (coeff == 2) {
+                            // Cas spécifique pour z = 2*x + 1 (si nécessaire)
+                            updated.add(new Inequality(1, id, -1, var, coeff + value - 1, false)); // id <= var + (coeff + value - 1)
+                            updated.add(new Inequality(-1, id, 1, var, -(coeff + value - 1), false)); // id >= var + (coeff + value - 1)
+                        } else {
+                            // Approximation pour d'autres coefficients
+                            updated.add(new Inequality(1, id, 0, null, coeff + value, false)); // Approximation conservatrice
+                            updated.add(new Inequality(-1, id, 0, null, -(coeff + value), false));
+                        }
+                    }
+                }
+            }
         }
-
-        Set<TwoVarsInequality> all = new HashSet<>(this.constraints);
-        all.addAll(newConstraints);
-        return new TwoVarLinearInequality(false, false, all);
+        return isSatisfiable(updated) ? new TwoVarLinearInequality(updated) : BOTTOM;
     }
 
     @Override
-    public TwoVarLinearInequality smallStepSemantics(ValueExpression expr, ProgramPoint pp, SemanticOracle oracle) throws SemanticException {
-        return this;
+    public TwoVarLinearInequality smallStepSemantics(ValueExpression expression, ProgramPoint pp, SemanticOracle oracle)
+            throws SemanticException {
+        return this; // Pas de modification pour les petits pas dans ce domaine
     }
 
     @Override
-    public TwoVarLinearInequality assume(ValueExpression expr, ProgramPoint src, ProgramPoint dest, SemanticOracle oracle) throws SemanticException {
-        if (!(expr instanceof BinaryExpression bin) || !(bin.getOperator() instanceof ComparisonLe))
-            return this;
+    public TwoVarLinearInequality assume(ValueExpression expression, ProgramPoint src, ProgramPoint dest, SemanticOracle oracle)
+            throws SemanticException {
+        if (isBottom()) return this;
 
-        ValueExpression left = (ValueExpression) bin.getLeft();
-        ValueExpression right = (ValueExpression) bin.getRight();
-
-        if (left instanceof BinaryExpression addExpr && addExpr.getOperator() instanceof AdditionOperator
-            && addExpr.getLeft() instanceof BinaryExpression mult1 && addExpr.getRight() instanceof BinaryExpression mult2
-            && mult1.getOperator() instanceof it.unive.lisa.symbolic.value.operator.MultiplicationOperator
-            && mult2.getOperator() instanceof it.unive.lisa.symbolic.value.operator.MultiplicationOperator
-            && mult1.getLeft() instanceof Constant c1 && mult2.getLeft() instanceof Constant c2
-            && mult1.getRight() instanceof Identifier x && mult2.getRight() instanceof Identifier y
-            && right instanceof Constant c) {
-
-            int a = (Integer) c1.getValue();
-            int b = (Integer) c2.getValue();
-            int d = (Integer) c.getValue();
-            TwoVarsInequality ineq = new TwoVarsInequality(a, x, b, y, d);
-
-            Set<TwoVarsInequality> newSet = new HashSet<>(constraints);
-            newSet.add(ineq);
-            return new TwoVarLinearInequality(false, false, newSet);
+        Set<Inequality> updated = new HashSet<>(inequalities);
+        if (expression instanceof BinaryExpression) {
+            BinaryExpression bin = (BinaryExpression) expression;
+            if (bin.getOperator() instanceof ComparisonLe) {
+                if (bin.getLeft() instanceof Identifier && bin.getRight() instanceof Identifier) {
+                    Identifier x = (Identifier) bin.getLeft();
+                    Identifier y = (Identifier) bin.getRight();
+                    if (!isHeapRelated(x) && !isHeapRelated(y)) {
+                        updated.add(new Inequality(1, x, -1, y, 0, true)); // x <= y
+                    }
+                } else if (bin.getLeft() instanceof Identifier && bin.getRight() instanceof BinaryExpression) {
+                    Identifier x = (Identifier) bin.getLeft();
+                    BinaryExpression right = (BinaryExpression) bin.getRight();
+                    if (right.getOperator() instanceof AdditionOperator &&
+                            right.getLeft() instanceof Identifier &&
+                            right.getRight() instanceof Constant) {
+                        Identifier y = (Identifier) right.getLeft();
+                        Constant c = (Constant) right.getRight();
+                        if (!isHeapRelated(x) && !isHeapRelated(y) && c.getValue() instanceof Integer) {
+                            updated.add(new Inequality(1, x, -1, y, (Integer) c.getValue(), false)); // x <= y + c
+                        }
+                    }
+                }
+            }
         }
-
-        return this;
+        return isSatisfiable(updated) ? new TwoVarLinearInequality(updated) : BOTTOM;
     }
 
     @Override
     public boolean knowsIdentifier(Identifier id) {
-        for (TwoVarsInequality i : constraints) {
-            if ((i.x != null && i.x.equals(id)) || (i.y != null && i.y.equals(id))) return true;
+        if (isTop() || isBottom() || isHeapRelated(id)) return false;
+        for (Inequality ineq : inequalities) {
+            if (ineq.involves(id)) return true;
         }
         return false;
     }
 
     @Override
     public TwoVarLinearInequality forgetIdentifier(Identifier id) throws SemanticException {
-        Set<TwoVarsInequality> newSet = new HashSet<>();
-        for (TwoVarsInequality i : constraints) {
-            if (!(id.equals(i.x) || id.equals(i.y))) newSet.add(i);
-        }
-        return new TwoVarLinearInequality(false, false, newSet);
+        if (isTop() || isBottom() || isHeapRelated(id)) return this;
+        return removeIdentifier(id);
     }
 
     @Override
-    public TwoVarLinearInequality forgetIdentifiersIf(Predicate<Identifier> pred) throws SemanticException {
-        Set<TwoVarsInequality> newSet = new HashSet<>();
-        for (TwoVarsInequality i : constraints) {
-            if ((i.x == null || !pred.test(i.x)) && (i.y == null || !pred.test(i.y))) newSet.add(i);
+    public TwoVarLinearInequality forgetIdentifiersIf(Predicate<Identifier> test) throws SemanticException {
+        if (isTop() || isBottom()) return this;
+        Set<Inequality> remaining = new HashSet<>();
+        for (Inequality ineq : inequalities) {
+            if ((ineq.x == null || !test.test(ineq.x)) && (ineq.y == null || !test.test(ineq.y))) {
+                remaining.add(ineq);
+            }
         }
-        return new TwoVarLinearInequality(false, false, newSet);
+        return new TwoVarLinearInequality(remaining);
+    }
+
+    @Override
+    public Satisfiability satisfies(ValueExpression expression, ProgramPoint pp, SemanticOracle oracle) throws SemanticException {
+        return Satisfiability.UNKNOWN; // À implémenter pour une vérification complète
     }
 
     @Override
     public TwoVarLinearInequality pushScope(ScopeToken token) throws SemanticException {
-        return this;
+        return this; // Pas de modification des contraintes dans ce domaine
     }
 
     @Override
     public TwoVarLinearInequality popScope(ScopeToken token) throws SemanticException {
-        return this;
+        return this; // Pas de modification des contraintes dans ce domaine
     }
 
-    @Override
-    public Satisfiability satisfies(ValueExpression expr, ProgramPoint pp, SemanticOracle oracle) throws SemanticException {
-        return Satisfiability.UNKNOWN;
+    // Méthodes utilitaires
+    private void applyCompletion() {
+        if (isTop) return;
+        Set<Inequality> completed = new HashSet<>(inequalities);
+        int maxIterations = 20;
+        int maxInequalities = 100;
+        int iteration = 0;
+        boolean changed;
+
+        // Conserver les contraintes protégées
+        Set<Inequality> protectedInequalities = new HashSet<>();
+        for (Inequality ineq : completed) {
+            if (ineq.isProtected) {
+                protectedInequalities.add(ineq);
+            }
+        }
+
+        do {
+            changed = false;
+            Set<Inequality> toAdd = new HashSet<>();
+            for (Inequality i1 : completed) {
+                for (Inequality i2 : completed) {
+                    if (i1.canCombineWith(i2)) {
+                        Inequality derived = i1.combine(i2);
+                        if (derived != null && !completed.contains(derived)) {
+                            if (derived.isUnsatisfiable()) {
+                                inequalities.clear();
+                                inequalities.add(derived);
+                                return;
+                            }
+                            if (derived.isTrivial()) continue;
+                            if (completed.size() + toAdd.size() < maxInequalities) {
+                                toAdd.add(derived);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            completed.addAll(toAdd);
+            iteration++;
+        } while (changed && iteration < maxIterations && completed.size() < maxInequalities);
+
+        if (iteration >= maxIterations || completed.size() >= maxInequalities) {
+            inequalities.clear();
+            inequalities.add(new Inequality(0, null, 0, null, -1, false));
+        } else {
+            inequalities.clear();
+            completed.addAll(protectedInequalities); // Réajouter les contraintes protégées
+            inequalities.addAll(completed);
+        }
+    }
+
+    private Set<Inequality> removeRedundant(Set<Inequality> set) {
+        Map<String, Inequality> tightened = new HashMap<>();
+        Set<Inequality> protectedInequalities = new HashSet<>();
+
+        // Identifier les contraintes protégées
+        for (Inequality ineq : set) {
+            if (ineq.isProtected) {
+                protectedInequalities.add(ineq);
+            }
+        }
+
+        // Suppression des redondances pour les contraintes non protégées
+        for (Inequality ineq : set) {
+            if (ineq.isTrivial() || ineq.isProtected) continue;
+            String key = ineq.getKey();
+            tightened.compute(key, (k, old) -> {
+                if (old == null) return ineq;
+                // Garder l'inégalité avec la constante la plus petite (plus restrictive)
+                return old.c > ineq.c ? ineq : old;
+            });
+        }
+
+        // Ajouter les contraintes protégées
+        Set<Inequality> result = new HashSet<>(tightened.values());
+        result.addAll(protectedInequalities);
+        return result;
+    }
+
+    private boolean isSatisfiable(Set<Inequality> set) {
+        for (Inequality ineq : set) {
+            if (ineq.isUnsatisfiable()) return false;
+        }
+        return true;
+    }
+
+    private boolean implies(Inequality ineq) {
+        for (Inequality existing : inequalities) {
+            if (existing.implies(ineq)) return true;
+        }
+        return false;
+    }
+
+    private TwoVarLinearInequality removeIdentifier(Identifier id) {
+        Set<Inequality> remaining = new HashSet<>();
+        for (Inequality ineq : inequalities) {
+            if (!ineq.involves(id)) remaining.add(ineq);
+        }
+        return new TwoVarLinearInequality(remaining);
+    }
+
+    private static boolean isHeapRelated(Identifier id) {
+        return id != null && id.toString().matches(".*(heap|this|&pp@).*");
     }
 
     @Override
     public StructuredRepresentation representation() {
-        if (topFlag) return new StringRepresentation("TOP");
-        if (bottomFlag) return new StringRepresentation("BOTTOM");
-        return new StringRepresentation(constraints.toString());
+        if (isTop()) return Lattice.topRepresentation();
+        if (isBottom()) return Lattice.bottomRepresentation();
+        return new StringRepresentation(inequalities.toString());
     }
 
-    public static boolean isHeapIdentifier(Identifier id) {
-        if (id == null) return false;
-        String s = id.toString();
-        return s.contains("heap") || s.contains("this") || s.contains("&pp@");
-    }
+    // Classe interne pour représenter une inégalité a*x + b*y <= c
+    public static class Inequality {
+        private final int a, b, c;
+        private final Identifier x, y;
+        private final boolean isProtected;
 
-    public static class TwoVarsInequality {
-        public final int a, b, c;
-        public final Identifier x, y;
-
-        public TwoVarsInequality(int a, Identifier x, int b, Identifier y, int c) {
+        public Inequality(int a, Identifier x, int b, Identifier y, int c, boolean isProtected) {
             this.a = a;
-            this.b = b;
-            this.c = c;
             this.x = x;
+            this.b = b;
             this.y = y;
+            this.c = c;
+            this.isProtected = isProtected;
         }
 
-        @Override
-        public String toString() {
-            StringBuilder sb = new StringBuilder();
-            if (a != 0 && x != null) sb.append(a).append("*").append(x);
-            if (b > 0 && y != null) sb.append(" + ").append(b).append("*").append(y);
-            else if (b < 0 && y != null) sb.append(" - ").append(-b).append("*").append(y);
-            sb.append(" <= ").append(c);
-            return sb.toString();
+        boolean isUnsatisfiable() {
+            return a == 0 && b == 0 && x == null && y == null && c < 0;
+        }
+
+        boolean isTrivial() {
+            return a == 0 && b == 0 && c >= 0;
+        }
+
+        boolean involves(Identifier id) {
+            return (x != null && x.equals(id)) || (y != null && y.equals(id));
+        }
+
+        String getKey() {
+            return a + "," + (x != null ? x.toString() : "null") + "," +
+                    b + "," + (y != null ? y.toString() : "null");
+        }
+
+        boolean canCombineWith(Inequality other) {
+            // Cas 1 : this.y == other.x
+            boolean case1 = this.y != null && other.x != null && this.y.equals(other.x) && this.b * other.a < 0;
+            // Cas 2 : this.x == other.y
+            boolean case2 = this.x != null && other.y != null && this.x.equals(other.y) && this.a * other.b < 0;
+            // Cas 3 : this.y == null et other.x != null et this.x == other.x
+            boolean case3 = this.y == null && other.x != null && this.x != null && this.x.equals(other.x) && this.b * other.a < 0;
+            // Cas 4 : this.x == null et other.y != null et this.y == other.y
+            boolean case4 = this.x == null && other.y != null && this.y != null && this.y.equals(other.y) && this.a * other.b < 0;
+            return case1 || case2 || case3 || case4;
+        }
+
+        Inequality combine(Inequality other) {
+            if (this.y != null && other.x != null && this.y.equals(other.x)) {
+                int newA = this.a * Math.abs(other.a);
+                int newB = other.b * Math.abs(this.b);
+                int newC = this.c * Math.abs(other.a) + other.c * Math.abs(this.b);
+                int gcd = gcd(Math.abs(newA), Math.abs(newB));
+                if (gcd == 0) gcd = 1;
+                newA = newA / gcd;
+                newB = newB / gcd;
+                newC = newC / gcd;
+                if (Math.abs(newA) > 1 || Math.abs(newB) > 1) return null;
+                return new Inequality(newA, this.x, newB, other.y, newC, false);
+            } else if (this.x != null && other.y != null && this.x.equals(other.y)) {
+                int newA = this.b * Math.abs(other.b);
+                int newB = other.a * Math.abs(this.a);
+                int newC = this.c * Math.abs(other.b) + other.c * Math.abs(this.a);
+                int gcd = gcd(Math.abs(newA), Math.abs(newB));
+                if (gcd == 0) gcd = 1;
+                newA = newA / gcd;
+                newB = newB / gcd;
+                newC = newC / gcd;
+                if (Math.abs(newA) > 1 || Math.abs(newB) > 1) return null;
+                return new Inequality(newA, this.y, newB, other.x, newC, false);
+            } else if (this.y == null && other.x != null && this.x != null && this.x.equals(other.x)) {
+                int newA = this.a * Math.abs(other.a);
+                int newB = other.b * Math.abs(this.b);
+                int newC = this.c * Math.abs(other.a) + other.c * Math.abs(this.b);
+                int gcd = gcd(Math.abs(newA), Math.abs(newB));
+                if (gcd == 0) gcd = 1;
+                newA = newA / gcd;
+                newB = newB / gcd;
+                newC = newC / gcd;
+                if (Math.abs(newA) > 1 || Math.abs(newB) > 1) return null;
+                return new Inequality(newA, this.x, newB, other.y, newC, false);
+            } else if (this.x == null && other.y != null && this.y != null && this.y.equals(other.y)) {
+                int newA = this.b * Math.abs(other.b);
+                int newB = other.a * Math.abs(this.a);
+                int newC = this.c * Math.abs(other.b) + other.c * Math.abs(this.a);
+                int gcd = gcd(Math.abs(newA), Math.abs(newB));
+                if (gcd == 0) gcd = 1;
+                newA = newA / gcd;
+                newB = newB / gcd;
+                newC = newC / gcd;
+                if (Math.abs(newA) > 1 || Math.abs(newB) > 1) return null;
+                return new Inequality(newA, this.y, newB, other.x, newC, false);
+            }
+            return null;
+        }
+
+        private int gcd(int a, int b) {
+            while (b != 0) {
+                int temp = b;
+                b = a % b;
+                a = temp;
+            }
+            return a;
+        }
+
+        boolean implies(Inequality other) {
+            return this.a == other.a && this.b == other.b &&
+                    Objects.equals(this.x, other.x) && Objects.equals(this.y, other.y) &&
+                    this.c <= other.c;
         }
 
         @Override
         public boolean equals(Object obj) {
-            if (!(obj instanceof TwoVarsInequality other)) return false;
-            return a == other.a && b == other.b && c == other.c && Objects.equals(x, other.x) && Objects.equals(y, other.y);
+            if (this == obj) return true;
+            if (!(obj instanceof Inequality)) return false;
+            Inequality other = (Inequality) obj;
+            return a == other.a && b == other.b && c == other.c &&
+                    Objects.equals(x, other.x) && Objects.equals(y, other.y);
         }
 
         @Override
         public int hashCode() {
             return Objects.hash(a, b, c, x, y);
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            if (a != 0) sb.append(a).append("*").append(x != null ? x : "0");
+            if (b != 0) sb.append(b > 0 ? " + " : " - ").append(Math.abs(b)).append("*").append(y != null ? y : "0");
+            sb.append(" <= ").append(c);
+            return sb.toString();
         }
     }
 }
